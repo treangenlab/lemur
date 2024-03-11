@@ -595,8 +595,6 @@ class LemurRunEnv():
     def EM_complete(self):
         n_reads = len(set(self.P_rgs_df.reset_index()["Read_ID"]))
         self.low_abundance_threshold = 1. / n_reads
-        # if n_reads > 1000:
-        #     self.low_abundance_threshold = 10. / n_reads
         
         if not self.args.nof:
             __P_rgs_df = self.P_rgs_df.reset_index()
@@ -607,15 +605,21 @@ class LemurRunEnv():
                 N_genes_hit = len(set(tid_df["Gene"]))
                 N_genes = len(set(self.gene_stats_df[self.gene_stats_df["Target_ID"] == tid]["type"]))
                 N_reads = len(set(tid_df["Read_ID"]))
-                E_N_genes_hit, variance = LemurRunEnv.get_expected_gene_hits(N_genes, N_reads)
-                    # For small number of reads mapped, i.e. 4-8 ratio is helpful since 6 out of 8 works
-                if (N_genes_hit / E_N_genes_hit > 0.7 or \
-                    # For "large" numbers like 20 MGs at 49 reads we can check by variance; formally as reads -> infinity, the variance is more informative
-                    E_N_genes_hit - N_genes_hit <= 3 * variance) \
-                    and N_genes_hit > 1:
-                    filter_pass.append(True)
+                if N_reads > 10:
+                    E_N_genes_hit, variance = LemurRunEnv.get_expected_gene_hits(N_genes, N_reads)
+                        # For small number of reads mapped, i.e. 4-8 ratio is helpful since 6 out of 8 works
+                    if (N_genes_hit / E_N_genes_hit > 0.7 or \
+                        # For "large" numbers like 20 MGs at 49 reads we can check by variance; formally as reads -> infinity, the variance is more informative
+                        E_N_genes_hit - N_genes_hit <= 3 * variance) \
+                        and N_genes_hit > 1:
+                        filter_pass.append(True)
+                    else:
+                        filter_pass.append(False)
                 else:
-                    filter_pass.append(False)
+                    if N_reads == 0:
+                        filter_pass.append(False)
+                    else:
+                        filter_pass.append(True)
             self.F = self.F.loc[filter_pass]
 
         lli = -np.inf
