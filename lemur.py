@@ -66,7 +66,10 @@ class LemurRunEnv():
         else:
             self.sam_path = self.args.output + ".sam"
 
-        self.thread_pool = Pool(self.args.num_threads)
+        # MN 3/13/24: Commenting this out because it can cause errors to have stray thread pools open. I've added
+        #   the Pool(..) statements closer to where they are used as well as .close() and .join() statements after
+        #   they are used.
+        # self.thread_pool = Pool(self.args.num_threads)
 
         self.tsv_output_path = self.args.output + "-relative_abundance"
 
@@ -203,6 +206,13 @@ class LemurRunEnv():
         misc_args.add_argument(
             "--profile-EM",
             dest="profile",
+            action="store_true",
+            default=False,
+            help=argparse.SUPPRESS
+        )
+        misc_args.add_argument(
+            "--old-EM-alg",
+            dest="use_old_EM_alg",
             action="store_true",
             default=False,
             help=argparse.SUPPRESS
@@ -442,6 +452,7 @@ class LemurRunEnv():
         if self.args.minimap2_AS:
             pass
         elif self.aln_score == "markov":
+            self.thread_pool = Pool(self.args.num_threads)
             if self.by_gene:
                 cigar_gene_mat_tuples = [(cigar, self.gene_transition_mats[P_rgs_data["Gene"][i]]) \
                                          for i, cigar in enumerate(P_rgs_data["cigar"])]
@@ -451,20 +462,29 @@ class LemurRunEnv():
                 P_rgs_data["log_P"] = self.thread_pool.starmap(self.score_cigar_markov,
                                                                zip(P_rgs_data["cigar"], 
                                                                repeat(self.transition_mat)))
+            self.thread_pool.close()
+            self.thread_pool.join()
+
         elif self.aln_score == "edit":
+            self.thread_pool = Pool(self.args.num_threads)
             if self.by_gene:
                 log_P_func = self.score_cigar_fixed(P_rgs_data["cigar"][i], self.gene_edit_cigars[gene])
             else:
                 P_rgs_data["log_P"] = self.thread_pool.starmap(self.score_cigar_fixed,
                                                                zip(P_rgs_data["cigar"], 
                                                                repeat(self.edit_cigar)))
+            self.thread_pool.close()
+            self.thread_pool.join()
         else:
             if self.by_gene:
                 log_P_func = self.score_cigar_fixed(P_rgs_data["cigar"][i], self.gene_fixed_cigars[gene])
             else:
+                self.thread_pool = Pool(self.args.num_threads)
                 P_rgs_data["log_P"] = self.thread_pool.starmap(self.score_cigar_fixed,
                                                                zip(P_rgs_data["cigar"], 
                                                                repeat(self.fixed_cigar)))
+                self.thread_pool.close()
+                self.thread_pool.join()
 
         del P_rgs_data["cigar"]
         self.P_rgs_df = pd.DataFrame(data=P_rgs_data)
@@ -599,7 +619,7 @@ class LemurRunEnv():
         ds = ns - __max
         with np.errstate(divide='ignore'):
             sumOfExp = np.exp(ds).sum()
-        return __max + np.log(sumOfExp)    
+        return __max + np.log(sumOfExp)
 
 
     def EM_step(self, final=False):
@@ -614,37 +634,48 @@ class LemurRunEnv():
         t0 = datetime.datetime.now().timestamp()
         if final:
             self.F = self.final_F
-        # Merges the current frequency vector into the Likelihood df, creating a new df called
+
+        # 1) Merges the current frequency vector into the Likelihood df, creating a new df called
         #   P_tgr, i.e. P( target | read )
         self.P_tgr = self.P_rgs_df.reset_index().merge(self.F,
                                                        how="inner", 
                                                        left_on="Target_ID", 
-                                                       right_index=True)        #Step 1a: Merge-F-to_LL
+                                                       right_index=True)        #Step 0: Merge-F-to_LL
         t1 = datetime.datetime.now().timestamp()
-        self.P_tgr["P(r|t)*F(t)"] = self.P_tgr.log_P + np.log(self.P_tgr.F)     #Step 1b: Calc_LL*F
+
+        # 2) Compute Likelihood x Prior:
+        self.P_tgr["P(r|t)*F(t)"] = self.P_tgr.log_P + np.log(self.P_tgr.F)     #Step 1: Calc_LL*F
+        readid = self.P_tgr["Read_ID"]
         t2 = datetime.datetime.now().timestamp()
-        self.P_tgr_sum = self.P_tgr[["Read_ID", "P(r|t)*F(t)"]].groupby(by="Read_ID", group_keys=False) \
-                                                               .agg(self.logSumExp)     #Step 2: Sum_LL*F_by_Read
+
+        # 3) Compute Lik*Pri Scale factors by Read:
+        if self.args.use_old_EM_alg:
+            self.P_tgr_sum = self.P_tgr[["Read_ID", "P(r|t)*F(t)"]].groupby(by="Read_ID", group_keys=False) \
+                                                                   .agg(self.logSumExp)     #Step 2: Sum_LL*F_by_Read
+        else:
+            self.P_tgr_sum = EM_get_Prgt_Ft_sums(self.P_tgr, self.args.num_threads)
         t3 = datetime.datetime.now().timestamp()
+
+        # 4) Read in per-read scale factors to (read,target)-level dataframe
         self.P_tgr = self.P_tgr.merge(self.P_tgr_sum,
                                       how="left",
                                       left_on="Read_ID",
                                       right_index=True,
                                       suffixes=["", "_sum"])                            #Step 3: Merge-LL*Fsum-to-LL
         t4 = datetime.datetime.now().timestamp()
-        # E-Step: Calculate P(t|r) = [ P(r|t)*F(t) / sum_{t in taxo} (P(r|t)*F(t)) ]
+
+        # 5) E-Step: Calculate P(t|r) = [ P(r|t)*F(t) / sum_{t in taxo} (P(r|t)*F(t)) ]
         self.P_tgr["P(t|r)"] = self.P_tgr["P(r|t)*F(t)"] - self.P_tgr["P(r|t)*F(t)_sum"]    #Step 4: Calc-Ptgr
         t5 = datetime.datetime.now().timestamp()
-
-        self.log(set(self.P_tgr["Target_ID"]), logging.DEBUG) 
-
+        self.log(set(self.P_tgr["Target_ID"]), logging.DEBUG)
         n_reads = len(self.P_tgr_sum)
 
-        # M-Step: Update the estimated values of F(t) = sum_{r}[P(t|r)]                     #Step 5: Recalc F
+        # 6) M-Step: Update the estimated values of F(t) = sum_{r}[P(t|r)]                     #Step 5: Recalc F
         self.F = self.P_tgr[["Target_ID", "P(t|r)"]].groupby("Target_ID") \
                                                     .agg(lambda x: np.exp(LemurRunEnv.logSumExp(x) - np.log(n_reads)))["P(t|r)"]
         self.F.name = "F"
         self.F = self.F.loc[self.F!=0]
+
         # Logging: report the sum of the F vector (which should be 1.0)
         self.log(self.F.sum(), logging.DEBUG)
         t6 = datetime.datetime.now().timestamp()
@@ -652,7 +683,12 @@ class LemurRunEnv():
 
         if final:
             self.final_F = self.F
-
+            #PROFILING
+            if self.args.profile:
+                EM_output_filename = self.args.output + '-EM_iter_step_times.csv'
+                EM_profile_np = np.array(self.EM_iter_step_times)
+                self.log(f"Saving EM Step Profiles to file {EM_output_filename}.")
+                np.savetxt(EM_output_filename, EM_profile_np, fmt='%.3f', delimiter=',')
 
     def compute_loglikelihood(self):
         '''Computes the total loglikelihood of the model, which should increase at every iteration or something
@@ -667,13 +703,15 @@ class LemurRunEnv():
         self.low_abundance_threshold = 1. / n_reads
 
         # PROFILING:
+        self.log(f"Profiling the EM-step has been set to {self.args.profile}.", logging.DEBUG)
         self.EM_iter_step_times = []
         def print_EM_iter_profile():
             emist=np.array(self.EM_iter_step_times)
             out='\t'+'\t'.join(map(lambda x: f'{x:.3f}', np.sum(emist,0))) + '\n'
             out+='\t'+'\t'.join(map(lambda x: f'{x:.2f}', np.sum(emist,0)/np.sum(emist))) + '\n'
             return out
-        
+
+        # '--nof' is the argument for skipping the width filter, so this loop is run if we **ARE** using the width filt.
         if not self.args.nof:
             __P_rgs_df = self.P_rgs_df.reset_index()
             tids = list(self.F.index)
@@ -752,14 +790,11 @@ class LemurRunEnv():
 
                 return
 
+            # PROFILING:
             if self.args.profile:
-                self.log(f"EM Step Profile after iter {i}:\n{print_EM_iter_profile()}")
+                self.log(f"EM Step Profile after iter {i}:\n{print_EM_iter_profile()}", logging.DEBUG)
 
             i += 1
-
-        if self.args.profile:
-            np.savetxt(self.args.output + '-EM_iter_step_times.csv', np.array(self.EM_iter_step_times),
-                       fmt='.3f', delimiter=',')
 
     @staticmethod
     def get_expected_gene_hits(N_genes, N_reads):
@@ -807,6 +842,41 @@ class LemurRunEnv():
         self.log(df_emu_copy.nlargest(30, ["F"]), logging.DEBUG)
         self.log(f"File generated: {output_path}\n", logging.DEBUG)
 
+def logSumExp_ReadId(readid, ns):
+    __max = np.max(ns)
+    if not np.isfinite(__max):
+        __max = 0
+    ds = ns - __max
+    with np.errstate(divide='ignore'):
+        sumOfExp = np.exp(ds).sum()
+    return readid, __max + np.log(sumOfExp)
+
+def EM_get_Prgt_Ft_sums(P_tgr, nthreads):
+    '''
+    This function is a strictly numpy replacement for the pandas *.groupby(...).agg(self.logSumExp)
+    function that was the bottleneck in the EM_step() function. Basically it takes the DF self.P_tgr
+    and returns a 2-column data frame with columns ["Read_ID","P(r|t)*F(t)"] where each row is the
+    sum of the second column over all rows with Read_ID equal to the first column.
+    '''
+    Read_ID = P_tgr["Read_ID"].to_numpy().astype(np.str_)
+    Prgt_Ft = P_tgr["P(r|t)*F(t)"].to_numpy()
+    Read_ID_as = Read_ID.argsort()
+    Read_ID = Read_ID[Read_ID_as]
+    Prgt_Ft = Prgt_Ft[Read_ID_as]
+    Read_ID_unq, Read_ID_Idx = np.unique(Read_ID, return_index=True)
+    map_args = list(zip(Read_ID_unq.tolist(), np.split(Prgt_Ft, Read_ID_Idx[1:])))
+    thread_pool = Pool(nthreads)
+    # map_res = thread_pool.starmap(lambda id,posts: (id, self.logSumExp(posts)), map_args)
+    map_res = thread_pool.starmap(logSumExp_ReadId, map_args)
+    thread_pool.close()
+    thread_pool.join()
+    P_tgr_sum = pd.DataFrame(map_res, columns=["Read_ID","P(r|t)*F(t)"], dtype='O')
+    P_tgr_sum['P(r|t)*F(t)'] = P_tgr_sum['P(r|t)*F(t)'].astype(float)
+    rid=P_tgr_sum["Read_ID"].to_numpy()
+    if not np.all(rid[:-1]<rid[1:]):
+        P_tgr_sum.sort_values(["Read_ID"],inplace=True)
+    P_tgr_sum.set_index(['Read_ID'], inplace=True)
+    return P_tgr_sum
 
 def main():
     run = LemurRunEnv()
