@@ -200,6 +200,13 @@ class LemurRunEnv():
             "--gid-name",
             action="store_true"
         )
+        misc_args.add_argument(
+            "--profile-EM",
+            dest="profile",
+            action="store_true",
+            default=False,
+            help=argparse.SUPPRESS
+        )
 
         return parser.parse_args()
 
@@ -211,6 +218,8 @@ class LemurRunEnv():
 
 
     def init_F(self):
+        '''Initializes the frequency vector F which represents the relative abundance of every species in the
+        reference database.'''
         self.F = pd.Series(data=[1. / len(self.df_taxonomy)] * len(self.df_taxonomy), 
                            index=self.df_taxonomy.index,
                            name="F")
@@ -218,6 +227,13 @@ class LemurRunEnv():
 
 
     def run_minimap2(self):
+        '''
+        Runs minimap2 with the following command:
+
+            minimap2 -ax map-ont -N 50 -p .9 -f 0 --sam-hit-only --eqx -t <n_threads> <db>/species_taxid.fasta \
+                <input> -o <sam_path>
+
+        '''
         db_sequence_file = os.path.join(self.args.db_prefix, 'species_taxid.fasta')
 
         cmd_str = f"minimap2 -ax map-ont \
@@ -268,6 +284,16 @@ class LemurRunEnv():
 
 
     def build_edit_cost(self):
+        '''
+        Constructs a dictionary object with the operation costs for each value in the CIGAR string depending on which
+        cost model to use (given at command-line).
+
+        Keys to the output dictionary are integer indices of the CIGAR characters. Namely they are from the set
+        {0, 1, 2, 7, 8, 4, 5} where: 0=Match, 1=Insertion, 2=Deletion, 7=Id, 8=Mismatch, 4=Hard Clip, 5=Soft Clip.
+
+        Returns:
+            op_costs (dict):    Dict of the form { <Op_Num>: <Cost> }
+        '''
         op_costs = {0: 0.,  # Match
                     1: 0.,  # Ins
                     2: 0.,  # Del
@@ -360,14 +386,32 @@ class LemurRunEnv():
 
     @staticmethod
     def __get_aln_len(aln):
+        '''Gets the alignment length from a tuple of the CIGAR stats from the .get_cigar_stats() function.'''
         _, I, _, _, _, _, _, E, X, _, _ = aln.get_cigar_stats()[0]
         return I + E + X
 
 
     def build_P_rgs_df(self):
+        '''
+        Builds a pandas data-frame containing the Likelihood values of the Read-Given-referenceSequence (hence `rgs`).
+
+        This function creates two dataframes that are stored in the parent object, one called `P_rgs_df` containing
+        the Likelihood values by Read-Target-Mapping, and another called `gene_stats_df' containing gene-wise
+        summary stats over these Likelihoods, which are then mapped onto the Likelihood dataframe.
+
+        How exactly the Likelihood is calculated depends on the command line inputs, but if the `minimap2_AS` flag
+        is True then the calculation is simply:
+            log_P = log( Minimap2_AlignmentScore / [2 * Alignment-Length ])
+
+        Returns:
+            self.P_rgs_df (pandas.DataFrame):   Dataframe with fields ("Read_ID", "Target_ID", "log_P", "Gene",
+                                                "Reference", "aln_len")
+        '''
         samfile = pysam.AlignmentFile(self.sam_path)
 
+        # The fields in the result are all pulled from the SAM file directly **except** for the `log_P` field.
         P_rgs_data = {"Read_ID": [], "Target_ID": [], "log_P": [], "cigar": [], "Gene": [], "Reference": [], "aln_len": []}
+        #               <sam>           <sam>          (calc)       <sam>        <sam>       <sam>            <sam>
 
         for i, aln in enumerate(samfile.fetch()):
             qname = aln.query_name
@@ -430,6 +474,7 @@ class LemurRunEnv():
 
         self.P_rgs_df.to_csv(f"{self.args.output}_P_rgs_df_raw.tsv", sep='\t', index=False)
 
+        # Get gene-wise stats from the file `gene2len.tsv` and read them onto this dataframe...
         self.gene_stats_df = pd.read_csv(f"{self.args.db_prefix}/gene2len.tsv", sep='\t')
         self.gene_stats_df["type"] = self.gene_stats_df["#id"].str.split("_").str[-1].str.split(":").str[0]
         self.gene_stats_df["Target_ID"] = self.gene_stats_df["#id"].str.split(":").str[0].astype(int)
@@ -558,43 +603,76 @@ class LemurRunEnv():
 
 
     def EM_step(self, final=False):
+        '''
+        Function to run a single step of the EM algorithm.
+
+        The EM setup for this model is basically the same as in the document from Alex for the nano16s project:
+            E-Step:     P(t|r) := [ P(r|t)*F(t) ] / sum_{t_in_Taxa} [P(r|t)*F(t)]
+            M-Step:     F(t)   := sum_{r_in_Reads} [P(t|r)]
+
+        '''
+        t0 = datetime.datetime.now().timestamp()
         if final:
             self.F = self.final_F
+        # Merges the current frequency vector into the Likelihood df, creating a new df called
+        #   P_tgr, i.e. P( target | read )
         self.P_tgr = self.P_rgs_df.reset_index().merge(self.F,
                                                        how="inner", 
                                                        left_on="Target_ID", 
-                                                       right_index=True)
-        self.P_tgr["P(r|t)*F(t)"] = self.P_tgr.log_P + np.log(self.P_tgr.F)
+                                                       right_index=True)        #Step 1a: Merge-F-to_LL
+        t1 = datetime.datetime.now().timestamp()
+        self.P_tgr["P(r|t)*F(t)"] = self.P_tgr.log_P + np.log(self.P_tgr.F)     #Step 1b: Calc_LL*F
+        t2 = datetime.datetime.now().timestamp()
         self.P_tgr_sum = self.P_tgr[["Read_ID", "P(r|t)*F(t)"]].groupby(by="Read_ID", group_keys=False) \
-                                                               .agg(self.logSumExp)
+                                                               .agg(self.logSumExp)     #Step 2: Sum_LL*F_by_Read
+        t3 = datetime.datetime.now().timestamp()
         self.P_tgr = self.P_tgr.merge(self.P_tgr_sum,
                                       how="left",
                                       left_on="Read_ID",
                                       right_index=True,
-                                      suffixes=["", "_sum"])
-        self.P_tgr["P(t|r)"] = self.P_tgr["P(r|t)*F(t)"] - self.P_tgr["P(r|t)*F(t)_sum"]
+                                      suffixes=["", "_sum"])                            #Step 3: Merge-LL*Fsum-to-LL
+        t4 = datetime.datetime.now().timestamp()
+        # E-Step: Calculate P(t|r) = [ P(r|t)*F(t) / sum_{t in taxo} (P(r|t)*F(t)) ]
+        self.P_tgr["P(t|r)"] = self.P_tgr["P(r|t)*F(t)"] - self.P_tgr["P(r|t)*F(t)_sum"]    #Step 4: Calc-Ptgr
+        t5 = datetime.datetime.now().timestamp()
 
         self.log(set(self.P_tgr["Target_ID"]), logging.DEBUG) 
 
         n_reads = len(self.P_tgr_sum)
 
+        # M-Step: Update the estimated values of F(t) = sum_{r}[P(t|r)]                     #Step 5: Recalc F
         self.F = self.P_tgr[["Target_ID", "P(t|r)"]].groupby("Target_ID") \
                                                     .agg(lambda x: np.exp(LemurRunEnv.logSumExp(x) - np.log(n_reads)))["P(t|r)"]
         self.F.name = "F"
         self.F = self.F.loc[self.F!=0]
+        # Logging: report the sum of the F vector (which should be 1.0)
         self.log(self.F.sum(), logging.DEBUG)
+        t6 = datetime.datetime.now().timestamp()
+        self.EM_iter_step_times.append((t1-t0,t2-t1,t3-t2,t4-t3,t5-t4,t6-t5))
 
         if final:
             self.final_F = self.F
 
 
     def compute_loglikelihood(self):
+        '''Computes the total loglikelihood of the model, which should increase at every iteration or something
+        is wrong.'''
         return self.P_tgr["P(r|t)*F(t)_sum"].sum()
     
 
     def EM_complete(self):
+        '''Workhorse function that runs the EM-algorithm one step at a time and determines when the convergence
+        criteria has been met, stopping once it has.'''
         n_reads = len(set(self.P_rgs_df.reset_index()["Read_ID"]))
         self.low_abundance_threshold = 1. / n_reads
+
+        # PROFILING:
+        self.EM_iter_step_times = []
+        def print_EM_iter_profile():
+            emist=np.array(self.EM_iter_step_times)
+            out='\t'+'\t'.join(map(lambda x: f'{x:.3f}', np.sum(emist,0))) + '\n'
+            out+='\t'+'\t'.join(map(lambda x: f'{x:.2f}', np.sum(emist,0)/np.sum(emist))) + '\n'
+            return out
         
         if not self.args.nof:
             __P_rgs_df = self.P_rgs_df.reset_index()
@@ -673,12 +751,26 @@ class LemurRunEnv():
                 self.collapse_rank()
 
                 return
-            
+
+            if self.args.profile:
+                self.log(f"EM Step Profile after iter {i}:\n{print_EM_iter_profile()}")
+
             i += 1
-            
+
+        if self.args.profile:
+            np.savetxt(self.args.output + '-EM_iter_step_times.csv', np.array(self.EM_iter_step_times),
+                       fmt='.3f', delimiter=',')
 
     @staticmethod
     def get_expected_gene_hits(N_genes, N_reads):
+        '''
+        Given the number of genes being used (g) and the number of reads (r), gets the mean/variance for the
+        number of genes with non-zero read-hits assuming each read hits each gene with uniform probability 1/g.
+
+        Let p=1/g (i.e., the uniform probabilty). The formulas for the output are:
+            E = g[1-(1-p)^r]
+            V = g(1-p)^r + g^2 [(1-p)(1-2p)^r - (1-p)^2r]
+        '''
         E = N_genes * (1 - np.power(1 - 1 / N_genes, N_reads)) 
         V = N_genes * np.power(1 - 1 / N_genes, N_reads) + \
             N_genes * N_genes * (1 - 1 / N_genes) * np.power(1 - 2 / N_genes, N_reads) - \
@@ -720,6 +812,7 @@ def main():
     run = LemurRunEnv()
 
     if not run.args.sam_input:
+        run.log(f"Starting run of minimap2 at {datetime.datetime.now()}", logging.INFO)
         ts = time.time_ns()
         run.run_minimap2()
         t0 = time.time_ns()
