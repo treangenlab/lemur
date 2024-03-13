@@ -66,8 +66,6 @@ class LemurRunEnv():
         else:
             self.sam_path = self.args.output + ".sam"
 
-        self.thread_pool = Pool(self.args.num_threads)
-
         self.tsv_output_path = self.args.output + "-relative_abundance"
 
         self.lli_threshold = 0.01
@@ -432,32 +430,32 @@ class LemurRunEnv():
                 self.log(f"build_P_rgs_df extracted {i+1} reads", logging.DEBUG)
 
 
-        if self.args.minimap2_AS:
-            pass
-        elif self.aln_score == "markov":
-            if self.by_gene:
-                cigar_gene_mat_tuples = [(cigar, self.gene_transition_mats[P_rgs_data["Gene"][i]]) \
-                                         for i, cigar in enumerate(P_rgs_data["cigar"])]
-                P_rgs_data["log_P"] = self.thread_pool.starmap(self.score_cigar_markov,
-                                                               cigar_gene_mat_tuples)
-            else:
-                P_rgs_data["log_P"] = self.thread_pool.starmap(self.score_cigar_markov,
-                                                               zip(P_rgs_data["cigar"], 
-                                                               repeat(self.transition_mat)))
-        elif self.aln_score == "edit":
-            if self.by_gene:
-                log_P_func = self.score_cigar_fixed(P_rgs_data["cigar"][i], self.gene_edit_cigars[gene])
-            else:
-                P_rgs_data["log_P"] = self.thread_pool.starmap(self.score_cigar_fixed,
-                                                               zip(P_rgs_data["cigar"], 
-                                                               repeat(self.edit_cigar)))
-        else:
-            if self.by_gene:
-                log_P_func = self.score_cigar_fixed(P_rgs_data["cigar"][i], self.gene_fixed_cigars[gene])
-            else:
-                P_rgs_data["log_P"] = self.thread_pool.starmap(self.score_cigar_fixed,
-                                                               zip(P_rgs_data["cigar"], 
-                                                               repeat(self.fixed_cigar)))
+        if not self.args.minimap2_AS:
+            with Pool(self.args.num_threads) as pool:
+                if self.aln_score == "markov":
+                    if self.by_gene:
+                        cigar_gene_mat_tuples = [(cigar, self.gene_transition_mats[P_rgs_data["Gene"][i]]) \
+                                                 for i, cigar in enumerate(P_rgs_data["cigar"])]
+                        P_rgs_data["log_P"] = pool.starmap(self.score_cigar_markov,
+                                                                       cigar_gene_mat_tuples)
+                    else:
+                        P_rgs_data["log_P"] = pool.starmap(self.score_cigar_markov,
+                                                                       zip(P_rgs_data["cigar"], 
+                                                                       repeat(self.transition_mat)))
+                elif self.aln_score == "edit":
+                    if self.by_gene:
+                        log_P_func = self.score_cigar_fixed(P_rgs_data["cigar"][i], self.gene_edit_cigars[gene])
+                    else:
+                        P_rgs_data["log_P"] = pool.starmap(self.score_cigar_fixed,
+                                                                       zip(P_rgs_data["cigar"], 
+                                                                       repeat(self.edit_cigar)))
+                else:
+                    if self.by_gene:
+                        log_P_func = self.score_cigar_fixed(P_rgs_data["cigar"][i], self.gene_fixed_cigars[gene])
+                    else:
+                        P_rgs_data["log_P"] = pool.starmap(self.score_cigar_fixed,
+                                                                       zip(P_rgs_data["cigar"], 
+                                                                       repeat(self.fixed_cigar)))
 
         del P_rgs_data["cigar"]
         self.P_rgs_df = pd.DataFrame(data=P_rgs_data)
