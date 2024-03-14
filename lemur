@@ -178,11 +178,9 @@ class LemurRunEnv():
             type=str,
         )
         misc_args.add_argument(
-            "-v",
-            "--verbosity",
-            type=int,
-            default=1,
-            help="Logging level: 0 (DEBUG), 1 (INFO), 2 (ERROR)"
+            "--verbose",
+            action='store_true',
+            help="Enable DEBUG level logging"
         )
         misc_args.add_argument(
             "--save-intermediate-profile",
@@ -522,12 +520,10 @@ class LemurRunEnv():
         error_handler = logging.StreamHandler(stream=sys.stderr)
         error_handler.setLevel(logging.ERROR)
 
-        if self.args.verbosity < 1:
+        if self.args.verbose:
             handler.setLevel(logging.DEBUG)
-        elif self.args.verbosity == 1:
-            handler.setLevel(logging.INFO)
         else:
-            handler.setLevel(logging.ERROR)
+            handler.setLevel(logging.INFO)
 
         formatter = logging.Formatter("%(asctime)s %(message)s",
                                       datefmt="%Y-%m-%d %I:%M:%S %p")
