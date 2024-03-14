@@ -156,8 +156,8 @@ class LemurRunEnv():
             help='minibatch size for minimap2 mapping [500M]'
         )
         mm2_args.add_argument(
-            '--mm2-type', choices=['map-ont', 'map-pb', 'sr'], default='map-ont',
-            help='short-read: sr, Pac-Bio: map-pb, ONT: map-ont [map-ont]'
+            '--mm2-type', choices=['map-ont', 'map-hifi', 'map-pb', 'sr'], default='map-ont',
+            help='ONT: map-ont [map-ont], PacBio (hifi): map-hifi, PacBio (CLR): map-pb, short-read: sr'
         )
         # Verbosity/logging/additional info
         misc_args = parser.add_argument_group(title="Miscellaneous arguments")
@@ -227,8 +227,10 @@ class LemurRunEnv():
         '''
         db_sequence_file = os.path.join(self.args.db_prefix, 'species_taxid.fasta')
 
-        cmd_str = f"minimap2 -ax map-ont \
-                            -N 50 \
+        cmd_str = f"minimap2 \
+                            -ax {self.args.mm2_type} \
+                            -N {self.args.mm2_N} \
+                            -K {self.args.mm2_K} \
                             -p .9 \
                             -f 0 \
                             --sam-hit-only \
