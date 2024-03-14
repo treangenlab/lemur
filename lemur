@@ -548,7 +548,7 @@ class LemurRunEnv():
         elif level == logging.ERROR:
             self.logger.error(msg)
         elif level == logging.CRITICAL:
-            self.logger.error(msg)
+            self.logger.critical(msg)
     
 
     @staticmethod
