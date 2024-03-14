@@ -114,6 +114,8 @@ class LemurRunEnv():
         )
         main_args.add_argument(
             "--aln-score",
+            '--aln-score', choices=['AS', 'edit', 'markov'], default='AS',
+            help='AS: Use SAM AS tag for score, edit: Use edit-type distribution for score, markov: Score CIGAR as markov chain',
             type=str
         )
         main_args.add_argument(
@@ -140,10 +142,6 @@ class LemurRunEnv():
             "--ref-weight",
             type=float,
             default=1.
-        )
-        main_args.add_argument(
-            "--minimap2-AS",
-            action="store_true",
         )
         #  Minimap2 specific arguments
         mm2_args = parser.add_argument_group(title="minimap2 arguments")
@@ -259,10 +257,9 @@ class LemurRunEnv():
 
 
     def build_alignment_model(self):
-        if self.args.minimap2_AS:
+        if self.args.aln_score == "AS":
             return 
-        
-        if self.args.aln_score == "markov":
+        elif self.args.aln_score == "markov":
             self.build_transition_mats()
         elif self.args.aln_score == "edit":
             self.edit_cigar = self.build_edit_cost()
@@ -392,7 +389,7 @@ class LemurRunEnv():
         the Likelihood values by Read-Target-Mapping, and another called `gene_stats_df' containing gene-wise
         summary stats over these Likelihoods, which are then mapped onto the Likelihood dataframe.
 
-        How exactly the Likelihood is calculated depends on the command line inputs, but if the `minimap2_AS` flag
+        How exactly the Likelihood is calculated depends on the command line inputs, but if `aln_score == "AS"`
         is True then the calculation is simply:
             log_P = log( Minimap2_AlignmentScore / [2 * Alignment-Length ])
 
@@ -417,7 +414,7 @@ class LemurRunEnv():
                     gene = aln.reference_name.split(":")[1].split("/")[-1]
                 cigar = aln.cigartuples
 
-                if self.args.minimap2_AS:
+                if self.args.aln_score == "AS":
                     log_P_score = np.log(aln_score / (2 * self.__get_aln_len(aln)))
                     P_rgs_data["log_P"].append(log_P_score)
 
@@ -432,7 +429,7 @@ class LemurRunEnv():
                 self.log(f"build_P_rgs_df extracted {i+1} reads", logging.DEBUG)
 
 
-        if not self.args.minimap2_AS:
+        if not self.args.aln_score == "AS":
             with Pool(self.args.num_threads) as pool:
                 if self.aln_score == "markov":
                     if self.by_gene:
@@ -482,7 +479,7 @@ class LemurRunEnv():
         if self.args.ref_weight != 0:
             self.P_rgs_df["log_P"] = gene_p_rgs_len_df["ref_len_weighted_log_P"]
 
-        if self.args.minimap2_AS:
+        if self.args.aln_score == "AS":
             self.P_rgs_df = self.P_rgs_df[(gene_p_rgs_len_df["aln_len_ratio"] >= self.args.min_aln_len_ratio) &
                                           (gene_p_rgs_len_df["log_P"]>=1.1*gene_p_rgs_len_df["max_log_P"]) & 
                                           (gene_p_rgs_len_df["log_P"]>=np.log(self.args.min_fidelity))]
