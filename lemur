@@ -9,6 +9,7 @@ import logging
 import sys
 import signal
 import time
+import shutil
 import subprocess as subp
 from itertools import repeat
 from multiprocessing import Pool
@@ -64,9 +65,14 @@ class LemurRunEnv():
         if self.args.sam_input:
             self.sam_path = self.args.sam_input
         else:
-            self.sam_path = self.args.output + ".sam"
+            self.sam_path = self.args.output + "/reads.sam"
 
-        self.tsv_output_path = self.args.output + "-relative_abundance"
+        if os.path.exists(self.args.output):
+            self.log(f"Output directory {self.args.output} exists! Results will be overwritten...", logging.WARNING)
+            shutil.rmtree(self.args.output)
+        os.makedirs(self.args.output)
+
+        self.tsv_output_prefix = self.args.output + "/relative_abundance"
 
         self.lli_threshold = 0.01
         self.low_abundance_threshold = 0.0001
@@ -91,7 +97,7 @@ class LemurRunEnv():
             "-o",
             "--output",
             type=str,
-            default=f"mob_out_{self.CURRDATE}_{self.CURRTIME}",
+            default=f"mob_out_{self.CURRDATE}_{self.CURRTIME}/",
             help="Folder where the Mob output will be stored"
         )
         main_args.add_argument(
@@ -462,7 +468,7 @@ class LemurRunEnv():
         self.P_rgs_df["log_P"] = self.P_rgs_df["log_P"] * self.P_rgs_df["max_aln_len"] / self.P_rgs_df["aln_len"]
         self.P_rgs_df["max_log_P"] = self.P_rgs_df.groupby("Read_ID")["log_P"].transform('max')
 
-        self.P_rgs_df.to_csv(f"{self.args.output}_P_rgs_df_raw.tsv", sep='\t', index=False)
+        self.P_rgs_df.to_csv(f"{self.args.output}/P_rgs_df_raw.tsv", sep='\t', index=False)
 
         # Get gene-wise stats from the file `gene2len.tsv` and read them onto this dataframe...
         self.gene_stats_df = pd.read_csv(f"{self.args.db_prefix}/gene2len.tsv", sep='\t')
@@ -475,7 +481,7 @@ class LemurRunEnv():
 
         gene_p_rgs_len_df["ref_len_weighted_log_P"] = gene_p_rgs_len_df["log_P"] + \
                                                       self.args.ref_weight * np.log(gene_p_rgs_len_df["aln_len_ratio"])
-        gene_p_rgs_len_df.to_csv(f"{self.args.output}_gene_P_rgs_df_raw.tsv", sep='\t', index=False)
+        gene_p_rgs_len_df.to_csv(f"{self.args.output}/gene_P_rgs_df_raw.tsv", sep='\t', index=False)
         if self.args.ref_weight != 0:
             self.P_rgs_df["log_P"] = gene_p_rgs_len_df["ref_len_weighted_log_P"]
 
@@ -502,7 +508,7 @@ class LemurRunEnv():
         __df = self.P_rgs_df.reset_index().merge(__df_id_count, how="left", on="Read_ID")
         self.unique_mapping_support_tids = set(__df[__df["Map_Count"]==1]["Target_ID"])
         self.log(self.P_rgs_df)
-        self.P_rgs_df.reset_index().to_csv(f"{self.args.output}_P_rgs_df.tsv", sep='\t', index=False)
+        self.P_rgs_df.reset_index().to_csv(f"{self.args.output}/P_rgs_df.tsv", sep='\t', index=False)
         return self.P_rgs_df
 
 
@@ -688,7 +694,7 @@ class LemurRunEnv():
 
             if self.args.save_intermediate_profile:
                 intermediate_df = self.df_taxonomy.merge(self.F, how='right', left_index=True, right_index=True).reset_index()
-                intermediate_df.to_csv(f"{self.tsv_output_path}-EM-{i}.tsv", sep='\t', index=False)
+                intermediate_df.to_csv(f"{self.tsv_output_prefix}-EM-{i}.tsv", sep='\t', index=False)
 
             if lli_delta < self.lli_threshold:
                 self.log(f"Low abundance threshold: {self.low_abundance_threshold:.8f}", logging.INFO)
@@ -746,13 +752,13 @@ class LemurRunEnv():
 
     def freq_to_lineage_df(self):
         results_df = self.df_taxonomy.merge(self.final_F, how='right', left_index=True, right_index=True).reset_index()
-        results_df.to_csv(f"{self.tsv_output_path}.tsv", sep='\t', index=False)
+        results_df.to_csv(f"{self.tsv_output_prefix}.tsv", sep='\t', index=False)
         
         return results_df
 
 
     def collapse_rank(self):
-        df_emu = pd.read_csv(f"{self.tsv_output_path}.tsv", sep='\t')
+        df_emu = pd.read_csv(f"{self.tsv_output_prefix}.tsv", sep='\t')
         if self.rank not in self.TAXONOMY_RANKS:
             raise ValueError("Specified rank must be in list: {}".format(self.TAXONOMY_RANKS))
         keep_ranks = self.TAXONOMY_RANKS[self.TAXONOMY_RANKS.index(self.rank):]
@@ -768,7 +774,7 @@ class LemurRunEnv():
             df_emu_copy = df_emu_copy.replace({'-': 0})
             df_emu_copy = df_emu_copy.astype({'F': 'float'})
         df_emu_copy = df_emu_copy.groupby(keep_ranks, dropna=False).sum()
-        output_path = f"{self.tsv_output_path}-{self.rank}.tsv"
+        output_path = f"{self.tsv_output_prefix}-{self.rank}.tsv"
         df_emu_copy.to_csv(output_path, sep='\t')
         self.log(df_emu_copy.nlargest(30, ["F"]), logging.DEBUG)
         self.log(f"File generated: {output_path}\n", logging.DEBUG)
