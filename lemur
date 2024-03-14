@@ -537,15 +537,15 @@ class LemurRunEnv():
 
     def log(self, msg, level=logging.DEBUG):
         if level == logging.DEBUG:
-            self.logger.debug(msg)
+            self.logger.debug(f"DEBUG:\t{msg}")
         elif level == logging.INFO:
-            self.logger.info(msg)
+            self.logger.info(f"INFO:\t{msg}")
         elif level == logging.WARNING:
-            self.logger.warning(msg)
+            self.logger.warning(f"WARNING:\t{msg}")
         elif level == logging.ERROR:
-            self.logger.error(msg)
+            self.logger.error(f"ERROR:\t{msg}")
         elif level == logging.CRITICAL:
-            self.logger.critical(msg)
+            self.logger.critical(f"CRITICAL:\t{msg}")
     
 
     @staticmethod
