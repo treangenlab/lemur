@@ -48,10 +48,6 @@ class LemurRunEnv():
                       5: 0.001}
 
 
-    def setup(self):
-        self.__init__()
-
-
     def __init__(self):
         self.CURRDATE = datetime.date.today().strftime('%Y-%m-%d')
         self.CURRTIME = datetime.date.today().strftime('%H:%M:%S')
