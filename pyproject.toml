@@ -1,0 +1,25 @@
+[project]
+name = "lemur"
+description = "Lemur is a tool for rapid and accurate taxonomic profiling on long-read metagenomic datasets"
+version = "1.0.0"
+authors = [
+    { name = "Nick Sapoval"}
+]
+
+dependencies = [
+    "pandas",
+    "numpy",
+    "pysam"
+]
+requires-python = ">=3.7"
+
+[project.scripts]
+lemur = "lemur.lemur:lemur_main"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["lemur"]
+package-dir = {"" = "./"}
