@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 #
 # Created on 11/07/2023 by Nick Sapoval
 
@@ -79,7 +79,7 @@ class LemurRunEnv():
     def parse_args(self):
         parser = argparse.ArgumentParser(description="""
             Lemur example:
-            python lemur.py -i <input> -o <output_dir> -t <threads>
+            lemur -i <input> -o <output_dir> -t <threads>
             """)
         parser.add_argument('-v', '--version', action='version', version='%(prog)s ' + __version__)
         
@@ -88,7 +88,8 @@ class LemurRunEnv():
             "-i",
             "--input",
             type=str,
-            help="Input FASTQ file for the analysis"
+            help="Input FASTQ file for the analysis",
+            required=True
         )
         main_args.add_argument(
             "-o",
@@ -773,7 +774,7 @@ class LemurRunEnv():
         self.log(f"File generated: {output_path}\n", logging.DEBUG)
 
 
-def main():
+def lemur_main():
     run = LemurRunEnv()
 
     if not run.args.sam_input:
@@ -813,4 +814,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    lemur_main()
