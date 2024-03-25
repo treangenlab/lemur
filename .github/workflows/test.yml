@@ -1,0 +1,64 @@
+name: Run basic tests for Lemur 
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    name: Test Lemur executable
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash -l {0}
+
+    strategy:
+          fail-fast: false
+          matrix:
+            os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v2.2.0
+        with:
+          environment-file: ./lemur.yml
+          activate-environment: lemur-env
+          python-version: 3.9
+
+      - name: Create output folder
+        run: |
+          mkdir ./examples/example-output
+
+      - name: Run Lemur
+        run: ./lemur -i ./examples/example-data/example.fastq 
+                     -o ./examples/example-output 
+                     -d ./examples/example-db 
+                     --tax-path ./examples/example-db/taxonomy.tsv 
+                     -r species 
+                     --verbose > ./examples/example-output/example.log 2>&1;
+
+      - name: Check that output was produced
+        id: check_files
+        uses: andstor/file-existence-action@v2.0.0
+        with:
+          files: "./examples/example-output/P_rgs_df.tsv, ./examples/example-output/relative_abundance.tsv, ./examples/example-output/relative_abundance-species.tsv" 
+          fail: true
+
+      - name: Check if outputed profile matches reference
+        uses: LouisBrunner/diff-action@v2.0.0
+        with:
+          old: ./examples/example-output-ref/relative_abundance.tsv
+          new: ./examples/example-output/relative_abundance.tsv
+          mode: strict
+          tolerance: same
+          output: ./examples/example-output/relative_abundance_diff.txt 
+    
+      - name: Archive production artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: lemur-out-log
+          path: ./examples/example-output/*
+          retention-days: 5

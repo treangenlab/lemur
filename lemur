@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 #
 # Created on 11/07/2023 by Nick Sapoval
 
@@ -9,6 +9,7 @@ import logging
 import sys
 import signal
 import time
+import shutil
 import subprocess as subp
 from itertools import repeat
 from multiprocessing import Pool
@@ -18,7 +19,7 @@ import numpy as np
 import pysam
 
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 
 def CTRLChandler(signum, frame):
@@ -47,10 +48,6 @@ class LemurRunEnv():
                       5: 0.001}
 
 
-    def setup(self):
-        self.__init__()
-
-
     def __init__(self):
         self.CURRDATE = datetime.date.today().strftime('%Y-%m-%d')
         self.CURRTIME = datetime.date.today().strftime('%H:%M:%S')
@@ -64,14 +61,14 @@ class LemurRunEnv():
         if self.args.sam_input:
             self.sam_path = self.args.sam_input
         else:
-            self.sam_path = self.args.output + ".sam"
+            self.sam_path = self.args.output + "/reads.sam"
 
-        # MN 3/13/24: Commenting this out because it can cause errors to have stray thread pools open. I've added
-        #   the Pool(..) statements closer to where they are used as well as .close() and .join() statements after
-        #   they are used.
-        # self.thread_pool = Pool(self.args.num_threads)
+        if os.path.exists(self.args.output):
+            self.log(f"Output directory {self.args.output} exists! Results will be overwritten...", logging.WARNING)
+            shutil.rmtree(self.args.output)
+        os.makedirs(self.args.output)
 
-        self.tsv_output_path = self.args.output + "-relative_abundance"
+        self.tsv_output_prefix = self.args.output + "/relative_abundance"
 
         self.lli_threshold = 0.01
         self.low_abundance_threshold = 0.0001
@@ -82,21 +79,23 @@ class LemurRunEnv():
     def parse_args(self):
         parser = argparse.ArgumentParser(description="""
             Lemur example:
-            python lemur.py -i <input> -o <output_dir> -t <threads>
+            lemur -i <input> -o <output_dir> -t <threads>
             """)
+        parser.add_argument('-v', '--version', action='version', version='%(prog)s ' + __version__)
         
         main_args = parser.add_argument_group(title="Main Mob arguments")
         main_args.add_argument(
             "-i",
             "--input",
             type=str,
-            help="Input FASTQ file for the analysis"
+            help="Input FASTQ file for the analysis",
+            required=True
         )
         main_args.add_argument(
             "-o",
             "--output",
             type=str,
-            default=f"mob_out_{self.CURRDATE}_{self.CURRTIME}",
+            default=f"mob_out_{self.CURRDATE}_{self.CURRTIME}/",
             help="Folder where the Mob output will be stored"
         )
         main_args.add_argument(
@@ -119,6 +118,8 @@ class LemurRunEnv():
         )
         main_args.add_argument(
             "--aln-score",
+            '--aln-score', choices=['AS', 'edit', 'markov'], default='AS',
+            help='AS: Use SAM AS tag for score, edit: Use edit-type distribution for score, markov: Score CIGAR as markov chain',
             type=str
         )
         main_args.add_argument(
@@ -146,10 +147,6 @@ class LemurRunEnv():
             type=float,
             default=1.
         )
-        main_args.add_argument(
-            "--minimap2-AS",
-            action="store_true",
-        )
         #  Minimap2 specific arguments
         mm2_args = parser.add_argument_group(title="minimap2 arguments")
         mm2_args.add_argument(
@@ -161,8 +158,8 @@ class LemurRunEnv():
             help='minibatch size for minimap2 mapping [500M]'
         )
         mm2_args.add_argument(
-            '--mm2-type', choices=['map-ont', 'map-pb', 'sr'], default='map-ont',
-            help='short-read: sr, Pac-Bio: map-pb, ONT: map-ont [map-ont]'
+            '--mm2-type', choices=['map-ont', 'map-hifi', 'map-pb', 'sr'], default='map-ont',
+            help='ONT: map-ont [map-ont], PacBio (hifi): map-hifi, PacBio (CLR): map-pb, short-read: sr'
         )
         # Verbosity/logging/additional info
         misc_args = parser.add_argument_group(title="Miscellaneous arguments")
@@ -183,11 +180,9 @@ class LemurRunEnv():
             type=str,
         )
         misc_args.add_argument(
-            "-v",
-            "--verbosity",
-            type=int,
-            default=1,
-            help="Logging level: 0 (DEBUG), 1 (INFO), 2 (ERROR)"
+            "--verbose",
+            action='store_true',
+            help="Enable DEBUG level logging"
         )
         misc_args.add_argument(
             "--save-intermediate-profile",
@@ -195,9 +190,9 @@ class LemurRunEnv():
             help="Will save abundance profile at every EM step"
         )
         misc_args.add_argument(
-            "--nof",
+            "--width-filter",
             action="store_true",
-            help="do not apply width filter"
+            help="Apply width filter"
         )
         misc_args.add_argument(
             "--gid-name",
@@ -246,8 +241,10 @@ class LemurRunEnv():
         '''
         db_sequence_file = os.path.join(self.args.db_prefix, 'species_taxid.fasta')
 
-        cmd_str = f"minimap2 -ax map-ont \
-                            -N 50 \
+        cmd_str = f"minimap2 \
+                            -ax {self.args.mm2_type} \
+                            -N {self.args.mm2_N} \
+                            -K {self.args.mm2_K} \
                             -p .9 \
                             -f 0 \
                             --sam-hit-only \
@@ -276,10 +273,9 @@ class LemurRunEnv():
 
 
     def build_alignment_model(self):
-        if self.args.minimap2_AS:
+        if self.args.aln_score == "AS":
             return 
-        
-        if self.args.aln_score == "markov":
+        elif self.args.aln_score == "markov":
             self.build_transition_mats()
         elif self.args.aln_score == "edit":
             self.edit_cigar = self.build_edit_cost()
@@ -409,7 +405,7 @@ class LemurRunEnv():
         the Likelihood values by Read-Target-Mapping, and another called `gene_stats_df' containing gene-wise
         summary stats over these Likelihoods, which are then mapped onto the Likelihood dataframe.
 
-        How exactly the Likelihood is calculated depends on the command line inputs, but if the `minimap2_AS` flag
+        How exactly the Likelihood is calculated depends on the command line inputs, but if `aln_score == "AS"`
         is True then the calculation is simply:
             log_P = log( Minimap2_AlignmentScore / [2 * Alignment-Length ])
 
@@ -434,13 +430,14 @@ class LemurRunEnv():
                     gene = aln.reference_name.split(":")[1].split("/")[-1]
                 cigar = aln.cigartuples
 
-                if self.args.minimap2_AS:
+                if self.args.aln_score == "AS":
                     log_P_score = np.log(aln_score / (2 * self.__get_aln_len(aln)))
                     P_rgs_data["log_P"].append(log_P_score)
 
                 P_rgs_data["Read_ID"].append(qname)
                 P_rgs_data["Target_ID"].append(species_tid)
-                P_rgs_data["cigar"].append(cigar)
+                if not self.args.aln_score == "AS":
+                    P_rgs_data["cigar"].append(cigar)
                 P_rgs_data["Gene"].append(gene)
                 P_rgs_data["Reference"].append(aln.reference_name)
                 P_rgs_data["aln_len"].append(self.__get_aln_len(aln))
@@ -449,50 +446,41 @@ class LemurRunEnv():
                 self.log(f"build_P_rgs_df extracted {i+1} reads", logging.DEBUG)
 
 
-        if self.args.minimap2_AS:
-            pass
-        elif self.aln_score == "markov":
-            self.thread_pool = Pool(self.args.num_threads)
-            if self.by_gene:
-                cigar_gene_mat_tuples = [(cigar, self.gene_transition_mats[P_rgs_data["Gene"][i]]) \
-                                         for i, cigar in enumerate(P_rgs_data["cigar"])]
-                P_rgs_data["log_P"] = self.thread_pool.starmap(self.score_cigar_markov,
-                                                               cigar_gene_mat_tuples)
-            else:
-                P_rgs_data["log_P"] = self.thread_pool.starmap(self.score_cigar_markov,
-                                                               zip(P_rgs_data["cigar"], 
-                                                               repeat(self.transition_mat)))
-            self.thread_pool.close()
-            self.thread_pool.join()
-
-        elif self.aln_score == "edit":
-            self.thread_pool = Pool(self.args.num_threads)
-            if self.by_gene:
-                log_P_func = self.score_cigar_fixed(P_rgs_data["cigar"][i], self.gene_edit_cigars[gene])
-            else:
-                P_rgs_data["log_P"] = self.thread_pool.starmap(self.score_cigar_fixed,
-                                                               zip(P_rgs_data["cigar"], 
-                                                               repeat(self.edit_cigar)))
-            self.thread_pool.close()
-            self.thread_pool.join()
-        else:
-            if self.by_gene:
-                log_P_func = self.score_cigar_fixed(P_rgs_data["cigar"][i], self.gene_fixed_cigars[gene])
-            else:
-                self.thread_pool = Pool(self.args.num_threads)
-                P_rgs_data["log_P"] = self.thread_pool.starmap(self.score_cigar_fixed,
-                                                               zip(P_rgs_data["cigar"], 
-                                                               repeat(self.fixed_cigar)))
-                self.thread_pool.close()
-                self.thread_pool.join()
+        if not self.args.aln_score == "AS":
+            with Pool(self.args.num_threads) as pool:
+                if self.aln_score == "markov":
+                    if self.by_gene:
+                        cigar_gene_mat_tuples = [(cigar, self.gene_transition_mats[P_rgs_data["Gene"][i]]) \
+                                                 for i, cigar in enumerate(P_rgs_data["cigar"])]
+                        P_rgs_data["log_P"] = pool.starmap(self.score_cigar_markov,
+                                                                       cigar_gene_mat_tuples)
+                    else:
+                        P_rgs_data["log_P"] = pool.starmap(self.score_cigar_markov,
+                                                                       zip(P_rgs_data["cigar"],
+                                                                       repeat(self.transition_mat)))
+                elif self.aln_score == "edit":
+                    if self.by_gene:
+                        log_P_func = self.score_cigar_fixed(P_rgs_data["cigar"][i], self.gene_edit_cigars[gene])
+                    else:
+                        P_rgs_data["log_P"] = pool.starmap(self.score_cigar_fixed,
+                                                                       zip(P_rgs_data["cigar"],
+                                                                       repeat(self.edit_cigar)))
+                else:
+                    if self.by_gene:
+                        log_P_func = self.score_cigar_fixed(P_rgs_data["cigar"][i], self.gene_fixed_cigars[gene])
+                    else:
+                        P_rgs_data["log_P"] = pool.starmap(self.score_cigar_fixed,
+                                                                       zip(P_rgs_data["cigar"],
+                                                                       repeat(self.fixed_cigar)))
 
         del P_rgs_data["cigar"]
+
         self.P_rgs_df = pd.DataFrame(data=P_rgs_data)
         self.P_rgs_df["max_aln_len"] = self.P_rgs_df.groupby("Read_ID")["aln_len"].transform('max')
         self.P_rgs_df["log_P"] = self.P_rgs_df["log_P"] * self.P_rgs_df["max_aln_len"] / self.P_rgs_df["aln_len"]
         self.P_rgs_df["max_log_P"] = self.P_rgs_df.groupby("Read_ID")["log_P"].transform('max')
 
-        self.P_rgs_df.to_csv(f"{self.args.output}_P_rgs_df_raw.tsv", sep='\t', index=False)
+        self.P_rgs_df.to_csv(f"{self.args.output}/P_rgs_df_raw.tsv", sep='\t', index=False)
 
         # Get gene-wise stats from the file `gene2len.tsv` and read them onto this dataframe...
         self.gene_stats_df = pd.read_csv(f"{self.args.db_prefix}/gene2len.tsv", sep='\t')
@@ -505,11 +493,11 @@ class LemurRunEnv():
 
         gene_p_rgs_len_df["ref_len_weighted_log_P"] = gene_p_rgs_len_df["log_P"] + \
                                                       self.args.ref_weight * np.log(gene_p_rgs_len_df["aln_len_ratio"])
-        gene_p_rgs_len_df.to_csv(f"{self.args.output}_gene_P_rgs_df_raw.tsv", sep='\t', index=False)
+        gene_p_rgs_len_df.to_csv(f"{self.args.output}/gene_P_rgs_df_raw.tsv", sep='\t', index=False)
         if self.args.ref_weight != 0:
             self.P_rgs_df["log_P"] = gene_p_rgs_len_df["ref_len_weighted_log_P"]
 
-        if self.args.minimap2_AS:
+        if self.args.aln_score == "AS":
             self.P_rgs_df = self.P_rgs_df[(gene_p_rgs_len_df["aln_len_ratio"] >= self.args.min_aln_len_ratio) &
                                           (gene_p_rgs_len_df["log_P"]>=1.1*gene_p_rgs_len_df["max_log_P"]) & 
                                           (gene_p_rgs_len_df["log_P"]>=np.log(self.args.min_fidelity))]
@@ -532,7 +520,7 @@ class LemurRunEnv():
         __df = self.P_rgs_df.reset_index().merge(__df_id_count, how="left", on="Read_ID")
         self.unique_mapping_support_tids = set(__df[__df["Map_Count"]==1]["Target_ID"])
         self.log(self.P_rgs_df)
-        self.P_rgs_df.reset_index().to_csv(f"{self.args.output}_P_rgs_df.tsv", sep='\t', index=False)
+        self.P_rgs_df.reset_index().to_csv(f"{self.args.output}/P_rgs_df.tsv", sep='\t', index=False)
         return self.P_rgs_df
 
 
@@ -550,12 +538,10 @@ class LemurRunEnv():
         error_handler = logging.StreamHandler(stream=sys.stderr)
         error_handler.setLevel(logging.ERROR)
 
-        if self.args.verbosity < 1:
+        if self.args.verbose:
             handler.setLevel(logging.DEBUG)
-        elif self.args.verbosity == 1:
-            handler.setLevel(logging.INFO)
         else:
-            handler.setLevel(logging.ERROR)
+            handler.setLevel(logging.INFO)
 
         formatter = logging.Formatter("%(asctime)s %(message)s",
                                       datefmt="%Y-%m-%d %I:%M:%S %p")
@@ -568,15 +554,15 @@ class LemurRunEnv():
 
     def log(self, msg, level=logging.DEBUG):
         if level == logging.DEBUG:
-            self.logger.debug(msg)
+            self.logger.debug(f"DEBUG:\t{msg}")
         elif level == logging.INFO:
-            self.logger.info(msg)
+            self.logger.info(f"INFO:\t{msg}")
         elif level == logging.WARNING:
-            self.logger.warning(msg)
+            self.logger.warning(f"WARNING:\t{msg}")
         elif level == logging.ERROR:
-            self.logger.error(msg)
+            self.logger.error(f"ERROR:\t{msg}")
         elif level == logging.CRITICAL:
-            self.logger.error(msg)
+            self.logger.critical(f"CRITICAL:\t{msg}")
     
 
     @staticmethod
@@ -702,17 +688,7 @@ class LemurRunEnv():
         n_reads = len(set(self.P_rgs_df.reset_index()["Read_ID"]))
         self.low_abundance_threshold = 1. / n_reads
 
-        # PROFILING:
-        self.log(f"Profiling the EM-step has been set to {self.args.profile}.", logging.DEBUG)
-        self.EM_iter_step_times = []
-        def print_EM_iter_profile():
-            emist=np.array(self.EM_iter_step_times)
-            out='\t'+'\t'.join(map(lambda x: f'{x:.3f}', np.sum(emist,0))) + '\n'
-            out+='\t'+'\t'.join(map(lambda x: f'{x:.2f}', np.sum(emist,0)/np.sum(emist))) + '\n'
-            return out
-
-        # '--nof' is the argument for skipping the width filter, so this loop is run if we **ARE** using the width filt.
-        if not self.args.nof:
+        if self.args.width_filter:
             __P_rgs_df = self.P_rgs_df.reset_index()
             tids = list(self.F.index)
             filter_pass = []
@@ -754,7 +730,7 @@ class LemurRunEnv():
 
             if self.args.save_intermediate_profile:
                 intermediate_df = self.df_taxonomy.merge(self.F, how='right', left_index=True, right_index=True).reset_index()
-                intermediate_df.to_csv(f"{self.tsv_output_path}-EM-{i}.tsv", sep='\t', index=False)
+                intermediate_df.to_csv(f"{self.tsv_output_prefix}-EM-{i}.tsv", sep='\t', index=False)
 
             if lli_delta < self.lli_threshold:
                 self.log(f"Low abundance threshold: {self.low_abundance_threshold:.8f}", logging.INFO)
@@ -790,10 +766,6 @@ class LemurRunEnv():
 
                 return
 
-            # PROFILING:
-            if self.args.profile:
-                self.log(f"EM Step Profile after iter {i}:\n{print_EM_iter_profile()}", logging.DEBUG)
-
             i += 1
 
     @staticmethod
@@ -815,13 +787,13 @@ class LemurRunEnv():
 
     def freq_to_lineage_df(self):
         results_df = self.df_taxonomy.merge(self.final_F, how='right', left_index=True, right_index=True).reset_index()
-        results_df.to_csv(f"{self.tsv_output_path}.tsv", sep='\t', index=False)
+        results_df.to_csv(f"{self.tsv_output_prefix}.tsv", sep='\t', index=False)
         
         return results_df
 
 
     def collapse_rank(self):
-        df_emu = pd.read_csv(f"{self.tsv_output_path}.tsv", sep='\t')
+        df_emu = pd.read_csv(f"{self.tsv_output_prefix}.tsv", sep='\t')
         if self.rank not in self.TAXONOMY_RANKS:
             raise ValueError("Specified rank must be in list: {}".format(self.TAXONOMY_RANKS))
         keep_ranks = self.TAXONOMY_RANKS[self.TAXONOMY_RANKS.index(self.rank):]
@@ -837,7 +809,7 @@ class LemurRunEnv():
             df_emu_copy = df_emu_copy.replace({'-': 0})
             df_emu_copy = df_emu_copy.astype({'F': 'float'})
         df_emu_copy = df_emu_copy.groupby(keep_ranks, dropna=False).sum()
-        output_path = f"{self.tsv_output_path}-{self.rank}.tsv"
+        output_path = f"{self.tsv_output_prefix}-{self.rank}.tsv"
         df_emu_copy.to_csv(output_path, sep='\t')
         self.log(df_emu_copy.nlargest(30, ["F"]), logging.DEBUG)
         self.log(f"File generated: {output_path}\n", logging.DEBUG)
