@@ -19,7 +19,7 @@ import numpy as np
 import pysam
 
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 
 def CTRLChandler(signum, frame):
@@ -422,7 +422,8 @@ class LemurRunEnv():
 
                 P_rgs_data["Read_ID"].append(qname)
                 P_rgs_data["Target_ID"].append(species_tid)
-                P_rgs_data["cigar"].append(cigar)
+                if not self.args.aln_score == "AS":
+                    P_rgs_data["cigar"].append(cigar)
                 P_rgs_data["Gene"].append(gene)
                 P_rgs_data["Reference"].append(aln.reference_name)
                 P_rgs_data["aln_len"].append(self.__get_aln_len(aln))
@@ -459,6 +460,7 @@ class LemurRunEnv():
                                                                        repeat(self.fixed_cigar)))
 
         del P_rgs_data["cigar"]
+
         self.P_rgs_df = pd.DataFrame(data=P_rgs_data)
         self.P_rgs_df["max_aln_len"] = self.P_rgs_df.groupby("Read_ID")["aln_len"].transform('max')
         self.P_rgs_df["log_P"] = self.P_rgs_df["log_P"] * self.P_rgs_df["max_aln_len"] / self.P_rgs_df["aln_len"]
