@@ -1,0 +1,10 @@
+name: lemur-env
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - numpy
+  - pandas
+  - pysam
+  - minimap2
