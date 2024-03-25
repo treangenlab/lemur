@@ -28,6 +28,10 @@ jobs:
           activate-environment: lemur-env
           python-version: 3.9
 
+      - name: Create output folder
+        run: |
+          mkdir ./examples/example-output
+
       - name: Run Lemur
         run: ./lemur -i ./examples/example-data/example.fastq 
                      -o ./examples/example-output 
