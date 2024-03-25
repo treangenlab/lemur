@@ -422,7 +422,7 @@ class LemurRunEnv():
 
                 P_rgs_data["Read_ID"].append(qname)
                 P_rgs_data["Target_ID"].append(species_tid)
-                if not self.args.minimap2_AS:
+                if not self.args.aln_score == "AS":
                     P_rgs_data["cigar"].append(cigar)
                 P_rgs_data["Gene"].append(gene)
                 P_rgs_data["Reference"].append(aln.reference_name)
