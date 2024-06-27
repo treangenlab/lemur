@@ -46,9 +46,15 @@ Main arguments:
   --tax-path TAX_PATH   Path to the taxonomy.tsv file 
   -t NUM_THREADS, --num-threads NUM_THREADS
                         Number of threads you want to use
-  --aln-score {AS,edit,markov}, --aln-score {AS,edit,markov}
+  --aln-score {AS,edit,markov}
                         AS: Use SAM AS tag for score, edit: Use edit-type distribution for score, markov: Score CIGAR as Markov chain
   -r RANK, --rank RANK  Taxonomic rank used for final aggregation
+  --min-aln-len-ratio MIN_ALN_LEN_RATIO
+                        Minimum ratio of alignment length to marker gene length [default: 0.75]
+  --min-fidelity MIN_FIDELITY
+                        Minimum acceptable log(P)/aln_length [deafult: log(0.5)]
+  --ref-weight REF_WEIGHT
+                        Scale factor for log(P) dependent on alignment length: log(P) <- log(P) + REF_WEIGHT * log(aln_length_ratio) [default: 1.0]
 ```
 
 minimap2 arguments:
