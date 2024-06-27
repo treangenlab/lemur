@@ -669,7 +669,11 @@ class LemurRunEnv():
         '''Workhorse function that runs the EM-algorithm one step at a time and determines when the convergence
         criteria has been met, stopping once it has.'''
         n_reads = len(set(self.P_rgs_df.reset_index()["Read_ID"]))
-        self.low_abundance_threshold = 1. / n_reads
+        if n_reads == 0:
+            self.log(f"No alignments available for EM algorithm.\nVerify SAM file, {self.self.args.output}P_rgs_df_raw.tsv, and consider lowering --min-aln-len-ratio or --fidelity flags., logging.ERROR)
+            exit(1)
+        else:
+            self.low_abundance_threshold = 1. / n_reads
 
         if self.args.width_filter:
             __P_rgs_df = self.P_rgs_df.reset_index()
