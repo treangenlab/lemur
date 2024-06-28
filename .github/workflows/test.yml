@@ -38,7 +38,7 @@ jobs:
                      -d ./examples/example-db 
                      --tax-path ./examples/example-db/taxonomy.tsv 
                      -r species 
-                     --verbose > ./examples/example-output/example.log 2>&1;
+                     --verbose;
 
       - name: Check that output was produced
         id: check_files
