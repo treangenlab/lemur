@@ -27,7 +27,6 @@ jobs:
           environment-file: ./lemur.yml
           activate-environment: lemur-env
           python-version: 3.9
-          miniconda-version: "latest"
 
       - name: Create output folder
         run: |
