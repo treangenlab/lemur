@@ -22,12 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Setup Miniconda
-        uses: conda-incubator/setup-miniconda@v2.2.0
+        uses: conda-incubator/setup-miniconda@v3
         with:
           environment-file: ./lemur.yml
           activate-environment: lemur-env
           python-version: 3.9
-          miniconda-version: "latest"
 
       - name: Create output folder
         run: |
