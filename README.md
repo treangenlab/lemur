@@ -111,3 +111,7 @@ Additional flags:
   -h, --help            show usage help message and exit
   -v, --version         show program's version number and exit
 ```
+
+## References
+
+Sapoval, Nicolae, Yunxi Liu, Kristen D. Curry, Bryce Kille, Wenyu Huang, Natalie Kokroko, Michael G. Nute et al. "Lightweight taxonomic profiling of long-read metagenomic datasets with Lemur and Magnet." *bioRxiv* (2024). [DOI:[10.1101/2024.06.01.596961](https://doi.org/10.1101/2024.06.01.596961)]
