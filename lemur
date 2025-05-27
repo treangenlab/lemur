@@ -147,6 +147,7 @@ class LemurRunEnv():
             type=float,
             default=1.
         )
+    
         #  Minimap2 specific arguments
         mm2_args = parser.add_argument_group(title="minimap2 arguments")
         mm2_args.add_argument(
@@ -197,6 +198,11 @@ class LemurRunEnv():
         misc_args.add_argument(
             "--gid-name",
             action="store_true"
+        )
+        misc_args.add_argument(
+            "--abundance-counts",
+            action="store_true",
+            help="If set, write the abundance counts file into the output dir"
         )
 
         return parser.parse_args()
@@ -669,11 +675,7 @@ class LemurRunEnv():
         '''Workhorse function that runs the EM-algorithm one step at a time and determines when the convergence
         criteria has been met, stopping once it has.'''
         n_reads = len(set(self.P_rgs_df.reset_index()["Read_ID"]))
-        if n_reads == 0:
-            self.log(f"No alignments available for EM algorithm.\nVerify SAM file, {self.self.args.output}P_rgs_df_raw.tsv, and consider lowering --min-aln-len-ratio or --fidelity flags.", logging.ERROR)
-            exit(1)
-        else:
-            self.low_abundance_threshold = 1. / n_reads
+        self.low_abundance_threshold = 1. / n_reads
 
         if self.args.width_filter:
             __P_rgs_df = self.P_rgs_df.reset_index()
@@ -801,6 +803,28 @@ class LemurRunEnv():
         df_emu_copy.to_csv(output_path, sep='\t')
         self.log(df_emu_copy.nlargest(30, ["F"]), logging.DEBUG)
         self.log(f"File generated: {output_path}\n", logging.DEBUG)
+    
+    def write_abundance_counts(self):
+        if not self.args.abundance_counts:
+            return
+
+        # count reads, merge and compute counts
+        n = self.P_rgs_df.reset_index()["Read_ID"].nunique()
+        df = (
+            self.df_taxonomy
+            .merge(self.final_F.rename("F"), right_index=True, left_index=True, how="right")
+            .reset_index()
+        )
+        df["estimated_counts"] = (df.pop("F") * n).round().astype(int)
+
+        # build output path
+        out_dir = self.args.output.rstrip(os.sep)
+        prefix  = os.path.basename(out_dir)
+        out     = f"{out_dir}/{prefix}_abundance_counts.tsv"
+
+        df.to_csv(out, sep="\t", index=False)
+        self.log(f"Abundance counts file generated: {out}", logging.INFO)
+        return df
 
 def logSumExp_ReadId(readid, ns):
     '''
@@ -894,6 +918,7 @@ def main():
 
     run.freq_to_lineage_df()
     run.collapse_rank()
+    run.write_abundance_counts()
 
     if not run.args.keep_alignments:
         os.remove(run.sam_path)

@@ -27,11 +27,12 @@ For minimal example you will need to specify the following parameters: the input
 lemur -i examples/example-data/example.fastq \
       -o example-output \
       -d examples/example-db \
-      --tax-path examples/example-db/taxnomy.tsv \
+      --tax-path examples/example-db/taxonomy.tsv \
+      --abundance-counts \ # will produce an extra counts file in outdir
       -r species
 ```
 
-The output in the `example-output` folder will consist of raw `relative_abundance.tsv` file with taxonomic IDs, lineage information, and inferred relative abundance (`F` column). There will also be a `relative_abundance-[rank].tsv` where the rank is specified by the `-r/--rank` flag (e.g. in the above example it will be `species`). The `*P_rgs_df*` files capture individual inferred probabilities of a given read comign from a particular taxon. 
+The output in the `example-output` folder will consist of raw `relative_abundance.tsv` file with taxonomic IDs, lineage information, and inferred relative abundance (`F` column). There will also be a `relative_abundance-[rank].tsv` where the rank is specified by the `-r/--rank` flag (e.g. in the above example it will be `species`). The `*P_rgs_df*` files capture individual inferred probabilities of a given read coming from a particular taxon. 
 
 ---
 
