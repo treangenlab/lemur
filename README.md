@@ -81,7 +81,7 @@ Main arguments:
   --min-aln-len-ratio MIN_ALN_LEN_RATIO
                         Minimum ratio of alignment length to marker gene length [default: 0.75]
   --min-fidelity MIN_FIDELITY
-                        Minimum acceptable log(P)/aln_length [deafult: log(0.5)]
+                        Minimum acceptable log(P)/aln_length [deafult: 0.5]
   --ref-weight REF_WEIGHT
                         Scale factor for log(P) dependent on alignment length: log(P) <- log(P) + REF_WEIGHT * log(aln_length_ratio) [default: 1.0]
 ```
